@@ -399,7 +399,7 @@
 
         function generateCode() {
             let code = `// Сгенерировано для ST7789\n`;
-            code += `#include <avr/pgmspace.h>\n\n`;
+            code += `#include <pgmspace.h>\n\n`;
             code += `// Размер: ${GRID_SIZE}x${GRID_SIZE} пикселей\n`;
             code += `const uint16_t characterSprite[${GRID_SIZE * GRID_SIZE}] PROGMEM = {\n`;
             
