@@ -1,1 +1,439 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TFT Sprite Generator MVP</title>
+    <style>
+        :root {
+            --bg-color: #1e1e1e;
+            --panel-bg: #2d2d2d;
+            --text-color: #e0e0e0;
+            --accent: #007acc;
+            --accent-hover: #005f9e;
+        }
 
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            margin-top: 0;
+            font-size: 24px;
+        }
+
+        .main-container {
+            display: flex;
+            gap: 40px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .panel {
+            background-color: var(--panel-bg);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .panel h2 {
+            margin-top: 0;
+            font-size: 18px;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        /* Рабочая зона (Сетка) */
+        #drawCanvas {
+            background-color: #000;
+            cursor: crosshair;
+            border: 2px solid #555;
+            image-rendering: pixelated;
+        }
+
+        .tools {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Превью дисплей */
+        .preview-screen-container {
+            padding: 10px;
+            background-color: #111;
+            border: 4px solid #444;
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        #previewCanvas {
+            background-color: #000;
+            display: block;
+        }
+
+        .preview-controls {
+            margin-top: 15px;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .preview-controls label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-family: monospace;
+        }
+
+        input[type="number"] {
+            width: 60px;
+            padding: 4px;
+            background-color: #444;
+            border: 1px solid #666;
+            color: #fff;
+            border-radius: 4px;
+        }
+
+        /* Кнопки */
+        button, input[type="color"] {
+            padding: 8px 12px;
+            background-color: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background-color: var(--accent-hover);
+        }
+
+        #btnErase {
+            background-color: #555;
+        }
+        #btnErase:hover {
+            background-color: #777;
+        }
+
+        /* Зона вывода кода */
+        .output-section {
+            width: 100%;
+            max-width: 900px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .action-row {
+            display: flex;
+            gap: 15px;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        textarea {
+            width: 100%;
+            height: 250px;
+            background-color: #111;
+            color: #4CAF50;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            resize: vertical;
+        }
+
+        .export-tools {
+            display: flex;
+            gap: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Генератор спрайтов для дисплея ST7789</h1>
+
+    <div class="main-container">
+        <!-- Левая колонка: Рисовалка -->
+        <div class="panel">
+            <h2>Canvas (64x64)</h2>
+            <canvas id="drawCanvas" width="512" height="512"></canvas>
+            <div class="tools">
+                <input type="color" id="colorPicker" value="#00FF00" title="Выбрать цвет">
+                <button id="btnPen">Кисть</button>
+                <button id="btnErase">Ластик</button>
+                <button id="btnClear">Очистить всё</button>
+            </div>
+        </div>
+
+        <!-- Правая колонка: Превью -->
+        <div class="panel">
+            <h2>Превью дисплея (320x240)</h2>
+            <div class="preview-screen-container">
+                <canvas id="previewCanvas" width="320" height="240"></canvas>
+            </div>
+            <div class="preview-controls">
+                <label>X: <input type="number" id="posX" value="128" min="0" max="320"></label>
+                <label>Y: <input type="number" id="posY" value="88" min="0" max="240"></label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Нижняя часть: Вывод -->
+    <div class="output-section">
+        <div class="action-row">
+            <button id="btnGenerate" style="font-size: 16px; padding: 10px 20px;">Ready / OK</button>
+            <div class="export-tools">
+                <button id="btnCopy">Copy Code</button>
+                <button id="btnDownload">Download .h</button>
+            </div>
+        </div>
+        <textarea id="outputCode" readonly placeholder="Нажми 'Ready / OK', чтобы сгенерировать C++ массив..."></textarea>
+    </div>
+
+    <script>
+        // --- Настройки ---
+        const GRID_SIZE = 64; // 64x64 пикселей
+        const DRAW_CANVAS_SIZE = 512; // Физический размер canvas на экране (512x512)
+        const CELL_SIZE = DRAW_CANVAS_SIZE / GRID_SIZE; // Один пиксель = 8x8 на экране
+        
+        // Массив, хранящий цвета (по умолчанию чёрный)
+        let grid = new Array(GRID_SIZE * GRID_SIZE).fill('#000000');
+        
+        let isDrawing = false;
+        let currentColor = '#00FF00'; // Стартовый цвет
+        let isEraser = false;
+
+        // --- DOM Элементы ---
+        const drawCanvas = document.getElementById('drawCanvas');
+        const ctxDraw = drawCanvas.getContext('2d');
+        
+        const previewCanvas = document.getElementById('previewCanvas');
+        const ctxPreview = previewCanvas.getContext('2d');
+        
+        const colorPicker = document.getElementById('colorPicker');
+        const posXInput = document.getElementById('posX');
+        const posYInput = document.getElementById('posY');
+        const outputCode = document.getElementById('outputCode');
+
+        // --- Инициализация ---
+        function init() {
+            drawGrid();
+            updatePreview();
+        }
+
+        // --- Функции рисования на рабочем Canvas ---
+        function drawGrid() {
+            ctxDraw.fillStyle = '#000000';
+            ctxDraw.fillRect(0, 0, DRAW_CANVAS_SIZE, DRAW_CANVAS_SIZE);
+            
+            for (let i = 0; i < grid.length; i++) {
+                if (grid[i] !== '#000000') {
+                    let x = (i % GRID_SIZE) * CELL_SIZE;
+                    let y = Math.floor(i / GRID_SIZE) * CELL_SIZE;
+                    ctxDraw.fillStyle = grid[i];
+                    ctxDraw.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+                }
+            }
+            
+            // Легкая сетка поверх (чтобы было удобно рисовать)
+            ctxDraw.strokeStyle = '#222222';
+            ctxDraw.lineWidth = 1;
+            for (let i = 0; i <= GRID_SIZE; i++) {
+                ctxDraw.beginPath();
+                ctxDraw.moveTo(i * CELL_SIZE, 0);
+                ctxDraw.lineTo(i * CELL_SIZE, DRAW_CANVAS_SIZE);
+                ctxDraw.stroke();
+                
+                ctxDraw.beginPath();
+                ctxDraw.moveTo(0, i * CELL_SIZE);
+                ctxDraw.lineTo(DRAW_CANVAS_SIZE, i * CELL_SIZE);
+                ctxDraw.stroke();
+            }
+        }
+
+        function paintCell(event) {
+            if (!isDrawing) return;
+            
+            const rect = drawCanvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            
+            const col = Math.floor(x / CELL_SIZE);
+            const row = Math.floor(y / CELL_SIZE);
+            
+            if (col >= 0 && col < GRID_SIZE && row >= 0 && row < GRID_SIZE) {
+                const index = row * GRID_SIZE + col;
+                const colorToPaint = isEraser ? '#000000' : currentColor;
+                
+                // Рисуем только если цвет изменился (оптимизация)
+                if (grid[index] !== colorToPaint) {
+                    grid[index] = colorToPaint;
+                    
+                    // Обновляем квадратик на холсте
+                    ctxDraw.fillStyle = colorToPaint;
+                    ctxDraw.fillRect(col * CELL_SIZE, row * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                    
+                    // Восстанавливаем границы сетки для этого квадратика
+                    ctxDraw.strokeStyle = '#222222';
+                    ctxDraw.strokeRect(col * CELL_SIZE, row * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+                    
+                    updatePreview();
+                }
+            }
+        }
+
+        // --- Слушатели мыши для Canvas ---
+        drawCanvas.addEventListener('mousedown', (e) => {
+            isDrawing = true;
+            paintCell(e);
+        });
+        drawCanvas.addEventListener('mousemove', paintCell);
+        drawCanvas.addEventListener('mouseup', () => { isDrawing = false; });
+        drawCanvas.addEventListener('mouseleave', () => { isDrawing = false; });
+
+        // --- Инструменты ---
+        colorPicker.addEventListener('input', (e) => {
+            currentColor = e.target.value;
+            isEraser = false;
+        });
+
+        document.getElementById('btnPen').addEventListener('click', () => {
+            isEraser = false;
+            currentColor = colorPicker.value;
+        });
+
+        document.getElementById('btnErase').addEventListener('click', () => {
+            isEraser = true;
+        });
+
+        document.getElementById('btnClear').addEventListener('click', () => {
+            if(confirm('Точно очистить холст?')) {
+                grid.fill('#000000');
+                drawGrid();
+                updatePreview();
+            }
+        });
+
+        // --- Превью ---
+        function updatePreview() {
+            // Очищаем экран (как tft.fillScreen(ST77XX_BLACK))
+            ctxPreview.fillStyle = '#000000';
+            ctxPreview.fillRect(0, 0, 320, 240);
+            
+            const startX = parseInt(posXInput.value);
+            const startY = parseInt(posYInput.value);
+            
+            for (let i = 0; i < grid.length; i++) {
+                if (grid[i] !== '#000000') {
+                    let col = i % GRID_SIZE;
+                    let row = Math.floor(i / GRID_SIZE);
+                    
+                    let drawX = startX + col;
+                    let drawY = startY + row;
+                    
+                    // Рисуем, только если попадает в границы 320x240
+                    if (drawX >= 0 && drawX < 320 && drawY >= 0 && drawY < 240) {
+                        ctxPreview.fillStyle = grid[i];
+                        ctxPreview.fillRect(drawX, drawY, 1, 1);
+                    }
+                }
+            }
+        }
+
+        posXInput.addEventListener('input', updatePreview);
+        posYInput.addEventListener('input', updatePreview);
+
+        // --- Конвертация в C++ ---
+        function hexToRGB565(hexString) {
+            // hexString имеет вид #RRGGBB
+            let r = parseInt(hexString.substring(1, 3), 16);
+            let g = parseInt(hexString.substring(3, 5), 16);
+            let b = parseInt(hexString.substring(5, 7), 16);
+            
+            // Формула RGB565
+            let rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+            
+            // Возвращаем в формате 0xXXXX
+            let result = rgb565.toString(16).toUpperCase();
+            return "0x" + result.padStart(4, '0');
+        }
+
+        function generateCode() {
+            let code = `// Сгенерировано для ST7789\n`;
+            code += `#include <avr/pgmspace.h>\n\n`;
+            code += `// Размер: ${GRID_SIZE}x${GRID_SIZE} пикселей\n`;
+            code += `const uint16_t characterSprite[${GRID_SIZE * GRID_SIZE}] PROGMEM = {\n`;
+            
+            for (let i = 0; i < grid.length; i++) {
+                // Если начало новой строки массива (по 8 значений на строку для красоты)
+                if (i % 8 === 0) {
+                    code += "  ";
+                }
+                
+                code += hexToRGB565(grid[i]);
+                
+                if (i !== grid.length - 1) {
+                    code += ", ";
+                }
+                
+                // Перенос строки каждые 8 пикселей
+                if ((i + 1) % 8 === 0) {
+                    code += "\n";
+                }
+            }
+            
+            code += `};\n`;
+            outputCode.value = code;
+        }
+
+        document.getElementById('btnGenerate').addEventListener('click', generateCode);
+
+        // --- Экспорт ---
+        document.getElementById('btnCopy').addEventListener('click', () => {
+            if (!outputCode.value) {
+                alert("Сначала нажми 'Ready / OK'!");
+                return;
+            }
+            navigator.clipboard.writeText(outputCode.value).then(() => {
+                alert("Код скопирован в буфер обмена!");
+            });
+        });
+
+        document.getElementById('btnDownload').addEventListener('click', () => {
+            if (!outputCode.value) {
+                alert("Сначала нажми 'Ready / OK'!");
+                return;
+            }
+            const blob = new Blob([outputCode.value], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = 'character.h';
+            
+            document.body.appendChild(a);
+            a.click();
+            
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        });
+
+        // Запуск
+        init();
+    </script>
+</body>
+</html>
