@@ -172,14 +172,20 @@
     <div class="main-container">
         <!-- Левая колонка: Рисовалка -->
         <div class="panel">
-            <h2>Canvas (64x64)</h2>
-            <canvas id="drawCanvas" width="512" height="512"></canvas>
+            <h2>Canvas (128x128)</h2>
+            <canvas id="drawCanvas" width="640" height="640"></canvas>
             <div class="tools">
                 <input type="color" id="colorPicker" value="#00FF00" title="Выбрать цвет">
                 <button id="btnPen" class="active-tool">Кисть</button>
                 <button id="btnErase">Ластик</button>
                 <label for="imageUpload" class="btn-upload" style="display:inline-block;">Загрузить изображение</label>
                 <input type="file" id="imageUpload" accept="image/*">
+                <label style="display:flex;align-items:center;gap:5px;font-size:13px;font-family:monospace;">
+                    <input type="checkbox" id="bgRemoveToggle" checked style="width:16px;height:16px;padding:0;"> Удалить фон
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:13px;font-family:monospace;">
+                    Порог: <input type="number" id="bgTolerance" value="40" min="0" max="255" style="width:55px;padding:4px;background-color:#444;border:1px solid #666;color:#fff;border-radius:4px;">
+                </label>
                 <button id="btnClear">Очистить всё</button>
             </div>
         </div>
@@ -208,8 +214,8 @@
 
     <script>
         // --- Настройки ---
-        const GRID_SIZE = 64; 
-        const DRAW_CANVAS_SIZE = 512; 
+        const GRID_SIZE = 128; 
+        const DRAW_CANVAS_SIZE = 640; 
         const CELL_SIZE = DRAW_CANVAS_SIZE / GRID_SIZE; 
 
         const PREVIEW_W = 320;
@@ -237,6 +243,11 @@
         const btnPen = document.getElementById('btnPen');
         const btnErase = document.getElementById('btnErase');
         const imageUpload = document.getElementById('imageUpload');
+        const bgRemoveToggle = document.getElementById('bgRemoveToggle');
+        const bgTolerance = document.getElementById('bgTolerance');
+
+        let lastLoadedImage = null; // запоминаем последнее загруженное изображение,
+                                     // чтобы можно было пересчитать удаление фона без повторной загрузки
 
         // --- Инициализация ---
         function init() {
@@ -368,11 +379,78 @@
             return '#' + toHex(r) + toHex(g) + toHex(b);
         }
 
+        // Удаление фона: flood fill от краёв изображения.
+        // Цвет фона определяется как средний цвет 4 углов, затем от каждого
+        // граничного пикселя запускается заливка — все связанные пиксели,
+        // похожие по цвету (в пределах порога tolerance), становятся прозрачными.
+        function removeBackground(canvas, tolerance) {
+            const w = canvas.width;
+            const h = canvas.height;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, w, h);
+            const data = imageData.data;
+
+            const getRGB = (x, y) => {
+                const i = (y * w + x) * 4;
+                return [data[i], data[i + 1], data[i + 2]];
+            };
+
+            const corners = [getRGB(0, 0), getRGB(w - 1, 0), getRGB(0, h - 1), getRGB(w - 1, h - 1)];
+            const bg = [0, 1, 2].map(c => Math.round(corners.reduce((s, p) => s + p[c], 0) / 4));
+
+            const colorDist = (x, y) => {
+                const [r, g, b] = getRGB(x, y);
+                return Math.sqrt((r - bg[0]) ** 2 + (g - bg[1]) ** 2 + (b - bg[2]) ** 2);
+            };
+
+            const visited = new Uint8Array(w * h);
+            const stack = [];
+            for (let x = 0; x < w; x++) { stack.push([x, 0]); stack.push([x, h - 1]); }
+            for (let y = 0; y < h; y++) { stack.push([0, y]); stack.push([w - 1, y]); }
+
+            while (stack.length) {
+                const [x, y] = stack.pop();
+                if (x < 0 || x >= w || y < 0 || y >= h) continue;
+                const idx = y * w + x;
+                if (visited[idx]) continue;
+                if (colorDist(x, y) > tolerance) continue;
+                visited[idx] = 1;
+                data[idx * 4 + 3] = 0; // делаем пиксель прозрачным
+                stack.push([x + 1, y]);
+                stack.push([x - 1, y]);
+                stack.push([x, y + 1]);
+                stack.push([x, y - 1]);
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+        }
+
         function loadImageToGrid(img) {
+            const removeBg = bgRemoveToggle.checked;
+            const tolerance = parseInt(bgTolerance.value) || 0;
+
+            // Работаем с изображением в исходном разрешении (до масштабирования) —
+            // так заливка фона получается точнее, чем на уже уменьшенной картинке.
+            const MAX_SRC = 768; // ограничиваем размер для производительности
+            const srcScale = Math.min(1, MAX_SRC / Math.max(img.width, img.height));
+            const srcW = Math.max(1, Math.round(img.width * srcScale));
+            const srcH = Math.max(1, Math.round(img.height * srcScale));
+
+            const srcCanvas = document.createElement('canvas');
+            srcCanvas.width = srcW;
+            srcCanvas.height = srcH;
+            const srcCtx = srcCanvas.getContext('2d');
+            srcCtx.imageSmoothingEnabled = true;
+            srcCtx.drawImage(img, 0, 0, srcW, srcH);
+
+            if (removeBg) {
+                removeBackground(srcCanvas, tolerance);
+            }
+
             // Определяем масштаб так, чтобы длинная сторона стала GRID_SIZE клеток
-            const scale = GRID_SIZE / Math.max(img.width, img.height);
-            const newW = Math.max(1, Math.round(img.width * scale));
-            const newH = Math.max(1, Math.round(img.height * scale));
+            const scale = GRID_SIZE / Math.max(srcW, srcH);
+            const newW = Math.max(1, Math.round(srcW * scale));
+            const newH = Math.max(1, Math.round(srcH * scale));
 
             // Рисуем уменьшенную версию изображения на временном канвасе
             const tempCanvas = document.createElement('canvas');
@@ -380,7 +458,7 @@
             tempCanvas.height = newH;
             const tempCtx = tempCanvas.getContext('2d');
             tempCtx.imageSmoothingEnabled = true;
-            tempCtx.drawImage(img, 0, 0, newW, newH);
+            tempCtx.drawImage(srcCanvas, 0, 0, newW, newH);
 
             const imageData = tempCtx.getImageData(0, 0, newW, newH).data;
 
@@ -421,6 +499,7 @@
             reader.onload = (evt) => {
                 const img = new Image();
                 img.onload = () => {
+                    lastLoadedImage = img;
                     loadImageToGrid(img);
                 };
                 img.onerror = () => {
@@ -432,6 +511,15 @@
 
             // Сброс value, чтобы можно было повторно выбрать тот же файл
             e.target.value = '';
+        });
+
+        // Пересчитать пикселизацию при изменении настроек удаления фона
+        // (без повторной загрузки файла)
+        bgRemoveToggle.addEventListener('change', () => {
+            if (lastLoadedImage) loadImageToGrid(lastLoadedImage);
+        });
+        bgTolerance.addEventListener('change', () => {
+            if (lastLoadedImage) loadImageToGrid(lastLoadedImage);
         });
 
         // --- Конвертация в C++ ---
