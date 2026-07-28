@@ -66,6 +66,7 @@
             gap: 10px;
             align-items: center;
             justify-content: center;
+            flex-wrap: wrap;
         }
 
         /* Превью дисплей */
@@ -82,28 +83,12 @@
             display: block;
         }
 
-        .preview-controls {
+        .preview-note {
             margin-top: 15px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            gap: 15px;
-        }
-
-        .preview-controls label {
-            display: flex;
-            align-items: center;
-            gap: 5px;
+            text-align: center;
+            font-size: 12px;
+            color: #999;
             font-family: monospace;
-        }
-
-        input[type="number"] {
-            width: 60px;
-            padding: 4px;
-            background-color: #444;
-            border: 1px solid #666;
-            color: #fff;
-            border-radius: 4px;
         }
 
         /* Кнопки */
@@ -122,6 +107,17 @@
             background-color: var(--accent-hover);
         }
 
+        .btn-upload {
+            background-color: #7b1fa2;
+        }
+        .btn-upload:hover {
+            background-color: #5e1580;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
         /* Класс для активного инструмента (Кисть или Ластик) */
         .active-tool {
             background-color: var(--active-tool) !important;
@@ -133,15 +129,6 @@
         }
         #btnClear:hover {
             background-color: #b71c1c;
-        }
-
-        #btnResetXY {
-            background-color: #555;
-            padding: 6px 10px;
-            font-size: 12px;
-        }
-        #btnResetXY:hover {
-            background-color: #777;
         }
 
         /* Зона вывода кода */
@@ -191,6 +178,8 @@
                 <input type="color" id="colorPicker" value="#00FF00" title="Выбрать цвет">
                 <button id="btnPen" class="active-tool">Кисть</button>
                 <button id="btnErase">Ластик</button>
+                <label for="imageUpload" class="btn-upload" style="display:inline-block;">Загрузить изображение</label>
+                <input type="file" id="imageUpload" accept="image/*">
                 <button id="btnClear">Очистить всё</button>
             </div>
         </div>
@@ -201,11 +190,7 @@
             <div class="preview-screen-container">
                 <canvas id="previewCanvas" width="320" height="240"></canvas>
             </div>
-            <div class="preview-controls">
-                <label>X: <input type="number" id="posX" value="128" min="0" max="320"></label>
-                <label>Y: <input type="number" id="posY" value="88" min="0" max="240"></label>
-                <button id="btnResetXY">Сброс</button>
-            </div>
+            <div class="preview-note">Спрайт зафиксирован по центру экрана</div>
         </div>
     </div>
 
@@ -226,6 +211,12 @@
         const GRID_SIZE = 64; 
         const DRAW_CANVAS_SIZE = 512; 
         const CELL_SIZE = DRAW_CANVAS_SIZE / GRID_SIZE; 
+
+        const PREVIEW_W = 320;
+        const PREVIEW_H = 240;
+        // Фиксированная позиция спрайта на экране (центр)
+        const FIXED_X = Math.floor((PREVIEW_W - GRID_SIZE) / 2);
+        const FIXED_Y = Math.floor((PREVIEW_H - GRID_SIZE) / 2);
         
         let grid = new Array(GRID_SIZE * GRID_SIZE).fill('#000000');
         
@@ -241,12 +232,11 @@
         const ctxPreview = previewCanvas.getContext('2d');
         
         const colorPicker = document.getElementById('colorPicker');
-        const posXInput = document.getElementById('posX');
-        const posYInput = document.getElementById('posY');
         const outputCode = document.getElementById('outputCode');
         
         const btnPen = document.getElementById('btnPen');
         const btnErase = document.getElementById('btnErase');
+        const imageUpload = document.getElementById('imageUpload');
 
         // --- Инициализация ---
         function init() {
@@ -351,23 +341,20 @@
             }
         });
 
-        // --- Превью ---
+        // --- Превью (фиксированная позиция по центру) ---
         function updatePreview() {
             ctxPreview.fillStyle = '#000000';
-            ctxPreview.fillRect(0, 0, 320, 240);
-            
-            const startX = parseInt(posXInput.value);
-            const startY = parseInt(posYInput.value);
-            
+            ctxPreview.fillRect(0, 0, PREVIEW_W, PREVIEW_H);
+
             for (let i = 0; i < grid.length; i++) {
                 if (grid[i] !== '#000000') {
                     let col = i % GRID_SIZE;
                     let row = Math.floor(i / GRID_SIZE);
-                    
-                    let drawX = startX + col;
-                    let drawY = startY + row;
-                    
-                    if (drawX >= 0 && drawX < 320 && drawY >= 0 && drawY < 240) {
+
+                    let drawX = FIXED_X + col;
+                    let drawY = FIXED_Y + row;
+
+                    if (drawX >= 0 && drawX < PREVIEW_W && drawY >= 0 && drawY < PREVIEW_H) {
                         ctxPreview.fillStyle = grid[i];
                         ctxPreview.fillRect(drawX, drawY, 1, 1);
                     }
@@ -375,14 +362,76 @@
             }
         }
 
-        posXInput.addEventListener('input', updatePreview);
-        posYInput.addEventListener('input', updatePreview);
-        
-        // Кнопка сброса координат
-        document.getElementById('btnResetXY').addEventListener('click', () => {
-            posXInput.value = 128;
-            posYInput.value = 88;
+        // --- Загрузка и пикселизация изображения ---
+        function rgbToHex(r, g, b) {
+            const toHex = (n) => n.toString(16).padStart(2, '0');
+            return '#' + toHex(r) + toHex(g) + toHex(b);
+        }
+
+        function loadImageToGrid(img) {
+            // Определяем масштаб так, чтобы длинная сторона стала GRID_SIZE клеток
+            const scale = GRID_SIZE / Math.max(img.width, img.height);
+            const newW = Math.max(1, Math.round(img.width * scale));
+            const newH = Math.max(1, Math.round(img.height * scale));
+
+            // Рисуем уменьшенную версию изображения на временном канвасе
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = newW;
+            tempCanvas.height = newH;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.imageSmoothingEnabled = true;
+            tempCtx.drawImage(img, 0, 0, newW, newH);
+
+            const imageData = tempCtx.getImageData(0, 0, newW, newH).data;
+
+            // Центрируем результат внутри сетки 64x64
+            const offsetX = Math.floor((GRID_SIZE - newW) / 2);
+            const offsetY = Math.floor((GRID_SIZE - newH) / 2);
+
+            grid.fill('#000000');
+
+            const ALPHA_THRESHOLD = 32; // пиксели с низкой непрозрачностью считаем "пустыми"
+
+            for (let y = 0; y < newH; y++) {
+                for (let x = 0; x < newW; x++) {
+                    const srcIdx = (y * newW + x) * 4;
+                    const r = imageData[srcIdx];
+                    const g = imageData[srcIdx + 1];
+                    const b = imageData[srcIdx + 2];
+                    const a = imageData[srcIdx + 3];
+
+                    const gridX = offsetX + x;
+                    const gridY = offsetY + y;
+
+                    if (gridX >= 0 && gridX < GRID_SIZE && gridY >= 0 && gridY < GRID_SIZE && a >= ALPHA_THRESHOLD) {
+                        grid[gridY * GRID_SIZE + gridX] = rgbToHex(r, g, b);
+                    }
+                }
+            }
+
+            drawGrid();
             updatePreview();
+        }
+
+        imageUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+                const img = new Image();
+                img.onload = () => {
+                    loadImageToGrid(img);
+                };
+                img.onerror = () => {
+                    alert('Не удалось загрузить это изображение.');
+                };
+                img.src = evt.target.result;
+            };
+            reader.readAsDataURL(file);
+
+            // Сброс value, чтобы можно было повторно выбрать тот же файл
+            e.target.value = '';
         });
 
         // --- Конвертация в C++ ---
